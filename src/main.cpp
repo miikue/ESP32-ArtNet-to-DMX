@@ -41,7 +41,6 @@
 #include <DNSServer.h>
 #include <ESPmDNS.h>
 #include <WiFiUdp.h>
-#include <ArduinoOTA.h>
 #include <esp_dmx.h>
 #include <rdm/controller.h>
 #include "ArtnetWifi.h"
@@ -121,6 +120,7 @@ ArtnetWifi artnet;
 
 unsigned long lastRdmDiscovery = 0;
 bool rdmInitDone = false;
+const bool enableRdm = false;
 
 char dynamicName[32] = "ESP-ArtNet-XXXXXX";
 
@@ -321,26 +321,6 @@ bool connectWiFi(const String& ssid, const String& pw, unsigned long timeoutMs =
   }
   Serial.println("\n[WiFi] Connected: " + WiFi.localIP().toString());
   return true;
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  OTA SETUP
-// ═══════════════════════════════════════════════════════════════
-
-void setupOTA() {
-  ArduinoOTA.setHostname(dynamicName);
-  ArduinoOTA.onStart([]() {
-    String type = (ArduinoOTA.getCommand() == U_FLASH) ? "Sketch" : "Filesystem";
-    Serial.println("OTA start: " + type);
-  });
-  ArduinoOTA.onEnd([]()  { Serial.println("\nOTA complete."); });
-  ArduinoOTA.onProgress([](unsigned int p, unsigned int t) {
-    Serial.printf("OTA: %u%%\r", p / (t / 100));
-  });
-  ArduinoOTA.onError([](ota_error_t e) {
-    Serial.printf("OTA error [%u]\n", e);
-  });
-  ArduinoOTA.begin();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -633,11 +613,6 @@ void setup() {
     }
   }
 
-  // ── OTA (STA only) ───────────────────────────────────────────
-  if (storedMode == MODE_STA) {
-    setupOTA();
-  }
-
   // ── ArtNet ───────────────────────────────────────────────────
   artnet.setArtDmxCallback(onArtNetFrame);
   artnet.begin(dynamicName);
@@ -664,10 +639,14 @@ void setup() {
   Serial.println("[DMX] Driver setup finished.");
 
   // ── Initial RDM discovery ─────────────────────────────────────
-  rdmDiscoverPort(dmxPortA, rdmDevicesA, rdmCountA, "Port A");
-  rdmDiscoverPort(dmxPortB, rdmDevicesB, rdmCountB, "Port B");
-  lastRdmDiscovery = millis();
-  rdmInitDone = true;
+  if (enableRdm) {
+    rdmDiscoverPort(dmxPortA, rdmDevicesA, rdmCountA, "Port A");
+    rdmDiscoverPort(dmxPortB, rdmDevicesB, rdmCountB, "Port B");
+    lastRdmDiscovery = millis();
+    rdmInitDone = true;
+  } else {
+    Serial.println("[RDM] Discovery disabled.");
+  }
 
   Serial.println("\n=== System ready ===");
   Serial.println("Tip: Send \"reset-wifi\" via Serial to re-open the config portal.");
@@ -689,7 +668,11 @@ void loop() {
       delay(500);
       ESP.restart();
     } else if (cmd == "rdm-list") {
-      printRdmDeviceList();
+      if (enableRdm) {
+        printRdmDeviceList();
+      } else {
+        Serial.println("[RDM] Disabled in this build.");
+      }
     }
   }
 
@@ -715,11 +698,6 @@ void loop() {
     return;
   }
 
-  // ── OTA handler (STA only) ───────────────────────────────────
-  if (storedMode == MODE_STA) {
-    ArduinoOTA.handle();
-  }
-
   // ── ArtNet ───────────────────────────────────────────────────
   artnet.read();
 
@@ -736,7 +714,7 @@ void loop() {
   }
 
   // ── Periodic RDM discovery ───────────────────────────────────
-  if (rdmInitDone && millis() - lastRdmDiscovery > RDM_DISCOVERY_INTERVAL) {
+  if (enableRdm && rdmInitDone && millis() - lastRdmDiscovery > RDM_DISCOVERY_INTERVAL) {
     lastRdmDiscovery = millis();
     rdmDiscoverPort(dmxPortA, rdmDevicesA, rdmCountA, "Port A");
     rdmDiscoverPort(dmxPortB, rdmDevicesB, rdmCountB, "Port B");
