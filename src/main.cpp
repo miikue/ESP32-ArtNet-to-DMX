@@ -60,15 +60,20 @@
 // Set to -1 to disable the button feature
 #define RESET_WIFI_PIN 0   // BOOT button on most DevKit boards
 
+// Fixed STA credentials for temporary direct WiFi connection
+const char* WIFI_SSID = "ssaasas";
+const char* WIFI_PASSWORD = "asasas";
+
+
 // DMX pins Port A
-const int transmitPinA = 17;
-const int receivePinA  = 16;
-const int enablePinA   = 4;
+const int transmitPinA = 40;
+const int receivePinA  = 41;
+const int enablePinA   = 42;
 
 // DMX pins Port B
-const int transmitPinB = 21;
-const int receivePinB  = 22;
-const int enablePinB   = 19;
+const int transmitPinB = 38;
+const int receivePinB  = 39;
+const int enablePinB   = 21;
 
 // ArtNet universe offset
 const int startUniverse = 0;
@@ -178,56 +183,7 @@ DNSServer dnsServer;
 static const char PORTAL_HTML[] PROGMEM = R"rawhtml(
 <!DOCTYPE html>
 <html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ESP32 ArtNet – WiFi Setup</title>
-<style>
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:system-ui,sans-serif;background:#111;color:#eee;
-       display:flex;justify-content:center;align-items:center;min-height:100vh;padding:16px}
-  .card{background:#1e1e1e;border:1px solid #333;border-radius:12px;
-        padding:32px;width:100%;max-width:420px}
-  h1{font-size:1.25rem;margin-bottom:4px;color:#fff}
-  .sub{color:#888;font-size:.85rem;margin-bottom:24px}
-  label{display:block;font-size:.85rem;color:#aaa;margin-bottom:4px;margin-top:14px}
-  input,select{width:100%;padding:10px 12px;background:#2a2a2a;border:1px solid #444;
-               border-radius:8px;color:#eee;font-size:1rem}
-  input:focus,select:focus{outline:none;border-color:#4f98a3}
-  button{margin-top:24px;width:100%;padding:12px;background:#01696f;color:#fff;
-         border:none;border-radius:8px;font-size:1rem;cursor:pointer}
-  button:hover{background:#0c4e54}
-</style>
-</head>
-<body>
-<div class="card">
-  <h1>ESP32 ArtNet &#8594; DMX</h1>
-  <p class="sub">WiFi Configuration &mdash; <span id="dn"></span></p>
-  <form method="POST" action="/save">
-    <label>WiFi Mode</label>
-    <select name="mode" id="modeSelect" onchange="toggleSta()">
-      <option value="sta">Station (STA) &ndash; connect to existing network</option>
-      <option value="ap">Access Point (AP) &ndash; standalone, no router needed</option>
-    </select>
-    <div id="staFields">
-      <label>Network SSID</label>
-      <input type="text" name="ssid" id="ssid" autocomplete="off" placeholder="My WiFi Network">
-      <label>Password</label>
-      <input type="password" name="pw" autocomplete="off" placeholder="(leave blank if open network)">
-    </div>
-    <button type="submit">Save &amp; Restart</button>
-  </form>
-</div>
-<script>
-  document.getElementById('dn').textContent='%DEVNAME%';
-  function toggleSta(){
-    var s=document.getElementById('modeSelect').value==='sta';
-    document.getElementById('staFields').style.opacity=s?'1':'.35';
-    document.getElementById('ssid').required=s;
-  }
-  toggleSta();
-</script>
-</body>
+
 </html>
 )rawhtml";
 
@@ -476,6 +432,15 @@ void onArtNetFrame(uint16_t universe, uint16_t numberOfChannels,
   uint16_t idx = universe - (uint16_t)startUniverse;
   if (idx >= (uint16_t)maxUniverses) return;
   uint16_t channels = min((uint16_t)(DMX_PACKET_SIZE - 1), numberOfChannels);
+
+  Serial.printf("[ArtNet] universe=%u channels=%u seq=%u\n",
+                universe, numberOfChannels, sequence);
+  Serial.print("[ArtNet] data: ");
+  for (uint16_t i = 0; i < channels && i < 12; i++) {
+    Serial.printf("%02X ", dmxData[i]);
+  }
+  Serial.println();
+
   if (universe == (uint16_t)startUniverse) {
     memcpy((void*)&dataA[1], dmxData, channels);
     dmxUpdateA = true;
@@ -561,7 +526,12 @@ void setup() {
 
   // ── Determine WiFi mode ──────────────────────────────────────
   uint8_t storedMode = loadWifiMode();
-  bool forcePortal   = (storedMode == 255);  // 255 = never configured
+  bool forcePortal   = false;
+
+  if (storedMode == 255) {
+    storedMode = MODE_STA;
+    Serial.println("[WiFi] No saved mode – using temporary STA mode with DHCP.");
+  }
 
   // BOOT button long-press (> 3 s) → force captive portal
 #if RESET_WIFI_PIN >= 0
@@ -587,12 +557,10 @@ void setup() {
 
   // ── MODE_STA ─────────────────────────────────────────────────
   if (storedMode == MODE_STA) {
-    String ssid = loadStaSsid();
-    String pw   = loadStaPassword();
-    if (ssid.length() == 0 || !connectWiFi(ssid, pw)) {
-      Serial.println("[WiFi] Credentials failed – launching portal.");
-      clearWifiConfig();
-      runCaptivePortal();
+    if (String(WIFI_SSID).length() == 0 || !connectWiFi(WIFI_SSID, WIFI_PASSWORD)) {
+      Serial.println("[WiFi] Credentials failed – restarting and staying in STA mode.");
+      delay(5000);
+      ESP.restart();
       return;
     }
   }
@@ -683,9 +651,7 @@ void loop() {
     Serial.println("[WiFi] Lost – reconnecting...");
     WiFi.disconnect();
     delay(500);
-    String ssid = loadStaSsid();
-    String pw   = loadStaPassword();
-    if (connectWiFi(ssid, pw, 10000)) {
+    if (connectWiFi(WIFI_SSID, WIFI_PASSWORD, 10000)) {
       MDNS.end();
       if (MDNS.begin(dynamicName)) {
         Serial.println("[mDNS] Restarted.");
@@ -704,11 +670,13 @@ void loop() {
   // ── DMX send ─────────────────────────────────────────────────
   if (dmxUpdateA) {
     dmxUpdateA = false;
+    Serial.println("[DMX] -> Port A");
     dmx_write(dmxPortA, (const void*)dataA, DMX_PACKET_SIZE);
     dmx_send(dmxPortA);
   }
   if (dmxUpdateB) {
     dmxUpdateB = false;
+    Serial.println("[DMX] -> Port B");
     dmx_write(dmxPortB, (const void*)dataB, DMX_PACKET_SIZE);
     dmx_send(dmxPortB);
   }

@@ -1,0 +1,64 @@
+#include <SPI.h>
+#include <Ethernet.h>
+
+const int W5500_MISO = 11;
+const int W5500_MOSI = 12;
+const int W5500_SCK  = 14;
+const int W5500_CS   = 13;
+
+byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
+
+class EspEthernetServer : public EthernetServer {
+  public:
+    EspEthernetServer(uint16_t port) : EthernetServer(port) {}
+    void begin(uint16_t port = 0) override {
+      (void)port;
+      EthernetServer::begin();
+    }
+};
+
+EspEthernetServer server(80);
+
+void setup() {
+  Serial.begin(115200);
+  
+  SPI.begin(W5500_SCK, W5500_MISO, W5500_MOSI, W5500_CS);
+  Ethernet.init(W5500_CS);
+
+  Serial.println("Ziskavam IP z DHCP...");
+  if (Ethernet.begin(mac) == 0) {
+    Serial.println("DHCP selhalo");
+    while (true) { 
+      delay(100); 
+    }
+  }
+
+  Serial.print("IP adresa: ");
+  Serial.println(Ethernet.localIP());
+  server.begin();
+}
+
+void loop() {
+  EthernetClient client = server.available();
+  if (client) {
+    while (client.connected()) {
+      if (client.available()) {
+        char c = client.read();
+        if (c == '\n') {
+          client.println("HTTP/1.1 200 OK");
+          client.println("Content-Type: text/html");
+          client.println("Connection: close\n");
+          client.println("<!DOCTYPE HTML><html>");
+          client.println("<h1>W5500 s oficialni knihovnou funguje!</h1>");
+          client.print("<p>Cas od startu: ");
+          client.print(millis() / 1000);
+          client.println(" s</p>");
+          client.println("</html>");
+          break;
+        }
+      }
+    }
+    delay(1);
+    client.stop();
+  }
+}
